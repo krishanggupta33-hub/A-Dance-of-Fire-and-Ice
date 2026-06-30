@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fire & Ice - Pure Rhythm</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #0a0a0f;
+            color: white;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        canvas {
+            display: block;
+        }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 0;
+            pointer-events: none;
+            width: 100%;
+            text-align: center;
+        }
+        h1 {
+            margin: 0;
+            font-size: 28px;
+            text-shadow: 0 0 10px white;
+        }
+        p {
+            font-size: 18px;
+            color: #aaa;
+        }
+        #editorUI {
+            display: none;
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            width: 300px;
+            background: rgba(10, 10, 15, 0.9);
+            border: 1px solid #333;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+        }
+        .pad-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 5px;
+            margin-bottom: 15px;
+        }
+        button {
+            background-color: #222;
+            color: white;
+            border: 1px solid #555;
+            padding: 10px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        button:hover { background-color: #333; }
+        .empty { visibility: hidden; }
+        .action-btn { background-color: #ff4444; border: none; font-weight: bold; }
+        .action-btn:hover { background-color: #ff6666; }
+        .play-btn { background-color: #44ff44; color: black; font-weight: bold; border: none; grid-column: span 3;}
+        .play-btn:hover { background-color: #66ff66; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <h1 id="statusDisplay">TAP SPACE TO PLAY</h1>
+        <p id="scoreDisplay">HOLD SPACE FOR EDITOR</p>
+    </div>
+    
+    <div id="editorUI">
+        <h2 style="margin-top: 0; color: #44ccff;">Level Editor</h2>
+        <div class="pad-grid">
+            <div class="empty"></div>
+            <button onclick="addTile('U')">UP (W)</button>
+            <div class="empty"></div>
+            <button onclick="addTile('L')">LEFT (A)</button>
+            <button onclick="addTile('D')">DOWN (S)</button>
+            <button onclick="addTile('R')">RIGHT (D)</button>
+            <button class="action-btn" style="grid-column: span 3;" onclick="undoTile()">UNDO (Z)</button>
+            <button class="play-btn" onclick="saveAndPlay()">SAVE & PLAY</button>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+    
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusDisplay = document.getElementById('statusDisplay');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const editorUI = document.getElementById('editorUI');
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        const TILE_SIZE = 60;
+        let BPM = 120; 
+        let BASE_SPEED = (BPM * Math.PI) / 3600;
+        const HIT_TOLERANCE = 0.4;
+
+        let bgMusic = new Audio('track.mp3');
+        
+        let defaultLevel = [
+            'R', 'R', 'R', 'U', 'U', 'R', 'D', 'D', 'R', 'R', 
+            'U', 'L', 'U', 'R', 'R', 'R', 'D', 'R', 'U', 'U'
+        ];
+        
+        let customLevel = [];
+        let activeLevelData = defaultLevel;
+
+        let path = [];
+        let pivotIndex = 0;
+        let currentAngle = Math.PI; 
+        let isRedPivot = true; 
+        
+        let score = 0;
+        let camera = { x: 0, y: 0 };
+        
+        let gameState = 'MENU'; 
+        let spaceDownTime = 0;
+        let isHoldingSpace = false;
+
+        let particles = [];
+        let fireParticles = [];
+        let iceParticles = [];
+        let floatingTexts = [];
+
+        function createExplosion(x, y, color) {
+            for (let i = 0; i < 25; i++) {
+                particles.push({
+                    x: x, y: y,
+                    vx: (Math.random() - 0.5) * 12,
+                    vy: (Math.random() - 0.5) * 12,
+                    life: 1.0, color: color
+                });
+            }
+        }
+
+        function createFloatingText(x, y, text, color) {
+            floatingTexts.push({x: x, y: y, text: text, color: color, life: 1.0});
+        }
+
+        function loadLevel(levelData) {
+            path = [{ x: 0, y: 0 }];
+            let cx = 0, cy = 0;
+            
+            levelData.forEach(dir => {
+                if (dir === 'R') cx += TILE_SIZE;
+                else if (dir === 'L') cx -= TILE_SIZE;
+                else if (dir === 'U') cy -= TILE_SIZE;
+                else if (dir === 'D') cy += TILE_SIZE;
+                path.push({ x: cx, y: cy });
+            });
+
+            if(gameState === 'EDITOR' && path.length > 0) {
+                camera.x = path[path.length - 1].x;
+                camera.y = path[path.length - 1].y;
+            }
+        }
+
+        function resetAllParticles() {
+            particles = []; fireParticles = []; iceParticles = []; floatingTexts = [];
+        }
+
+        function resetGame(levelArray) {
+            activeLevelData = levelArray;
+            loadLevel(activeLevelData);
+            pivotIndex = 0;
+            currentAngle = Math.PI;
+            isRedPivot = true;
+            score = 0;
+            resetAllParticles();
+        }
+
+        function normalizeAngle(a) {
+            let res = a % (Math.PI * 2);
+            if (res < 0) res += Math.PI * 2;
+            return res;
+        }
+
+        function openEditor() {
+            gameState = 'EDITOR';
+            customLevel = [];
+            editorUI.style.display = 'block';
+            statusDisplay.innerText = "";
+            scoreDisplay.innerText = "";
+            loadLevel(customLevel);
+        }
+
+        function saveAndPlay() {
+            gameState = 'PLAYING';
+            editorUI.style.display = 'none';
+            if (customLevel.length > 0) {
+                resetGame(customLevel);
+            } else {
+                resetGame(defaultLevel);
+            }
+            bgMusic.currentTime = 0;
+            bgMusic.play().catch(e => {});
+            statusDisplay.innerText = "";
+            scoreDisplay.innerText = `Score: ${score}`;
+        }
+
+        function addTile(dir) {
+            if (gameState !== 'EDITOR') return;
+            customLevel.push(dir);
+            loadLevel(customLevel);
+        }
+
+        function undoTile() {
+            if (gameState !== 'EDITOR' || customLevel.length === 0) return;
+            customLevel.pop();
+            loadLevel(customLevel);
+        }
+
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                e.preventDefault();
+                if (gameState === 'MENU' && !isHoldingSpace) {
+                    isHoldingSpace = true;
+                    spaceDownTime = Date.now();
+                } else if (gameState === 'GAMEOVER' || gameState === 'WON') {
+                    gameState = 'MENU';
+                    statusDisplay.innerText = "TAP SPACE TO PLAY";
+                    scoreDisplay.innerText = "HOLD SPACE FOR EDITOR";
+                    resetGame(defaultLevel);
+                } else if (gameState === 'PLAYING') {
+                    let pivotTile = path[pivotIndex];
+                    let nextTile = path[pivotIndex + 1];
+
+                    if (!nextTile) {
+                        gameState = 'WON';
+                        bgMusic.pause();
+                        statusDisplay.innerText = "LEVEL COMPLETE!";
+                        scoreDisplay.innerText = "Press SPACE to return to Menu.";
+                        return;
+                    }
+
+                    let targetAngle = Math.atan2(nextTile.y - pivotTile.y, nextTile.x - pivotTile.x);
+                    let diff = Math.abs(normalizeAngle(currentAngle) - normalizeAngle(targetAngle));
+                    if (diff > Math.PI) diff = (Math.PI * 2) - diff;
+
+                    if (diff < HIT_TOLERANCE) {
+                        createExplosion(nextTile.x, nextTile.y, isRedPivot ? '#44ccff' : '#ff4444');
+                        if (diff < 0.10) { score += 300; createFloatingText(nextTile.x, nextTile.y, "PERFECT", "#ffcc00"); } 
+                        else if (diff < 0.25) { score += 100; createFloatingText(nextTile.x, nextTile.y, "GREAT", "#44ccff"); } 
+                        else { score += 50; createFloatingText(nextTile.x, nextTile.y, "GOOD", "#44ff44"); }
+
+                        pivotIndex++;
+                        isRedPivot = !isRedPivot;
+                        currentAngle = targetAngle + Math.PI;
+                        scoreDisplay.innerText = `Score: ${score}`;
+                    } else {
+                        gameState = 'GAMEOVER';
+                        bgMusic.pause();
+                        statusDisplay.innerText = "GAME OVER!";
+                        scoreDisplay.innerText = "Press SPACE to return to Menu.";
+                    }
+                }
+            } else if (gameState === 'EDITOR') {
+                if (e.key === 'w' || e.key === 'ArrowUp') addTile('U');
+                if (e.key === 'a' || e.key === 'ArrowLeft') addTile('L');
+                if (e.key === 's' || e.key === 'ArrowDown') addTile('D');
+                if (e.key === 'd' || e.key === 'ArrowRight') addTile('R');
+                if (e.key === 'z' || e.key === 'Backspace') undoTile();
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'Space' && gameState === 'MENU') {
+                isHoldingSpace = false;
+                let holdDuration = Date.now() - spaceDownTime;
+                
+                if (holdDuration < 1000) {
+                    gameState = 'PLAYING';
+                    statusDisplay.innerText = "";
+                    scoreDisplay.innerText = `Score: 0`;
+                    resetGame(activeLevelData);
+                    bgMusic.currentTime = 0;
+                    bgMusic.play().catch(e => {});
+                }
+                spaceDownTime = 0;
+            }
+        });
+
+        function loop() {
+            if (gameState === 'PLAYING') currentAngle += BASE_SPEED;
+
+            let pivotTile = path[pivotIndex] || {x:0, y:0};
+            if (gameState === 'EDITOR' && path.length > 0) pivotTile = path[path.length - 1];
+            
+            camera.x += (pivotTile.x - canvas.width / 2 - camera.x) * 0.1;
+            camera.y += (pivotTile.y - canvas.height / 2 - camera.y) * 0.1;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            ctx.save();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+            ctx.lineWidth = 1;
+            let bgOffsetX = (camera.x * 0.5) % 40;
+            let bgOffsetY = (camera.y * 0.5) % 40;
+            ctx.beginPath();
+            for(let x = -bgOffsetX - 40; x < canvas.width; x += 40) { ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); }
+            for(let y = -bgOffsetY - 40; y < canvas.height; y += 40) { ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); }
+            ctx.stroke();
+            ctx.restore();
+
+            ctx.save();
+            ctx.translate(-camera.x, -camera.y);
+
+            ctx.strokeStyle = '#555';
+            ctx.lineWidth = 2;
+            path.forEach((tile, index) => {
+                ctx.fillStyle = '#222';
+                ctx.fillRect(tile.x - TILE_SIZE/2, tile.y - TILE_SIZE/2, TILE_SIZE, TILE_SIZE);
+                ctx.strokeRect(tile.x - TILE_SIZE/2, tile.y - TILE_SIZE/2, TILE_SIZE, TILE_SIZE);
+
+                if (gameState === 'EDITOR' && index === path.length - 1) {
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 4;
+                    ctx.strokeRect(tile.x - TILE_SIZE/2 - 2, tile.y - TILE_SIZE/2 - 2, TILE_SIZE + 4, TILE_SIZE + 4);
+                    ctx.strokeStyle = '#555';
+                    ctx.lineWidth = 2;
+                }
+            });
+
+            if (gameState === 'MENU' && isHoldingSpace) {
+                let progress = Math.min((Date.now() - spaceDownTime) / 1000, 1.0);
+                ctx.beginPath();
+                ctx.arc(pivotTile.x, pivotTile.y, TILE_SIZE * 1.5, -Math.PI / 2, (-Math.PI / 2) + (Math.PI * 2 * progress));
+                ctx.strokeStyle = '#44ccff';
+                ctx.lineWidth = 5;
+                ctx.stroke();
+                if (progress >= 1.0) { isHoldingSpace = false; openEditor(); }
+            }
+
+            if (path.length > 0 && gameState !== 'EDITOR') {
+                let orbiterX = pivotTile.x + Math.cos(currentAngle) * TILE_SIZE;
+                let orbiterY = pivotTile.y + Math.sin(currentAngle) * TILE_SIZE;
+
+                let redPos = isRedPivot ? pivotTile : { x: orbiterX, y: orbiterY };
+                let bluePos = isRedPivot ? { x: orbiterX, y: orbiterY } : pivotTile;
+
+                if (gameState === 'PLAYING') {
+                    if (Math.random() < 0.6) {
+                        fireParticles.push({
+                            x: redPos.x + (Math.random() - 0.5) * 10,
+                            y: redPos.y + (Math.random() - 0.5) * 10,
+                            vx: (Math.random() - 0.5) * 2,
+                            vy: (Math.random() * -2) - 0.5,
+                            life: 1.0,
+                            color: ['#ff2200', '#ff8800', '#ffcc00'][Math.floor(Math.random() * 3)]
+                        });
+                    }
+                    if (Math.random() < 0.6) {
+                        iceParticles.push({
+                            x: bluePos.x + (Math.random() - 0.5) * 15,
+                            y: bluePos.y + (Math.random() - 0.5) * 15,
+                            vx: (Math.random() - 0.5) * 1.5,
+                            vy: (Math.random() * 1.5) + 0.5,
+                            life: 1.0,
+                            color: ['#ffffff', '#aaddff', '#44ccff'][Math.floor(Math.random() * 3)]
+                        });
+                    }
+                }
+
+                ctx.beginPath();
+                ctx.arc(pivotTile.x, pivotTile.y, TILE_SIZE, 0, Math.PI * 2);
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+
+                ctx.fillStyle = '#ff4444'; ctx.beginPath(); ctx.arc(redPos.x, redPos.y, 15, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = '#44ccff'; ctx.beginPath(); ctx.arc(bluePos.x, bluePos.y, 15, 0, Math.PI * 2); ctx.fill();
+            }
+
+            for (let i = fireParticles.length - 1; i >= 0; i--) {
+                let p = fireParticles[i];
+                p.x += p.vx; p.y += p.vy; p.life -= 0.04;
+                if (p.life <= 0) fireParticles.splice(i, 1);
+                else { ctx.globalAlpha = p.life; ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, 4, 4); }
+            }
+
+            for (let i = iceParticles.length - 1; i >= 0; i--) {
+                let p = iceParticles[i];
+                p.x += p.vx; p.y += p.vy; p.life -= 0.03;
+                if (p.life <= 0) iceParticles.splice(i, 1);
+                else { ctx.globalAlpha = p.life; ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, 4, 4); }
+            }
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx; p.y += p.vy; p.life -= 0.04;
+                if (p.life <= 0) particles.splice(i, 1);
+                else { ctx.globalAlpha = p.life; ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, 6, 6); }
+            }
+            
+            for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                let ft = floatingTexts[i];
+                ft.y -= 2; ft.life -= 0.03;
+                if (ft.life <= 0) floatingTexts.splice(i, 1);
+                else {
+                    ctx.globalAlpha = ft.life; ctx.fillStyle = ft.color;
+                    ctx.font = "bold 20px 'Courier New'"; ctx.textAlign = "center";
+                    ctx.fillText(ft.text, ft.x, ft.y - 30);
+                }
+            }
+            ctx.globalAlpha = 1.0;
+
+            ctx.restore();
+            requestAnimationFrame(loop);
+        }
+
+        loadLevel(defaultLevel); 
+        loop();
+
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+    </script>
+</body>
+</html>

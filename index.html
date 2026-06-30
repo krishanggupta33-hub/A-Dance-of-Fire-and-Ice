@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fire & Ice - Visual Juice</title>
+    <title>Fire & Ice - Multi-Hit Engine</title>
     <style>
         body {
             margin: 0;
@@ -18,7 +18,7 @@
         #ui {
             position: absolute;
             top: 20px;
-            left: 20px;
+            left: 0;
             pointer-events: none;
             width: 100%;
             text-align: center;
@@ -53,15 +53,16 @@
 
         const TILE_SIZE = 60;
         let BPM = 120; 
-        let ORBIT_SPEED = (BPM * Math.PI) / 3600;
+        let BASE_SPEED = (BPM * Math.PI) / 3600;
+        let currentSpeed = BASE_SPEED;
         const HIT_TOLERANCE = 0.4;
 
         let bgMusic = new Audio('track.mp3');
         
         const level1 = [
-            'R', 'R', 'R', 'U', 'U', 'R', 'D', 'D', 'R', 'R', 
-            'U', 'L', 'U', 'R', 'R', 'R', 'D', 'R', 'U', 'U', 
-            'R', 'R', 'D', 'D', 'D', 'R', 'R', 'U', 'R', 'R'
+            'R', 'R', 'R', 'F_U', 'U', 'R', 'S_D', 'D', 'R', 'R', 
+            'F_U', 'F_L', 'F_U', 'R', 'R', 'R', 'S_D', 'R', 'U', 'U', 
+            'R', 'F_R', 'F_D', 'D', 'D', 'R', 'R', 'U', 'S_R', 'R'
         ];
 
         let path = [];
@@ -92,15 +93,20 @@
         }
 
         function loadLevel(levelData) {
-            path = [{ x: 0, y: 0 }];
+            path = [{ x: 0, y: 0, mod: 'N' }];
             let cx = 0, cy = 0;
             
-            levelData.forEach(direction => {
-                if (direction === 'R') cx += TILE_SIZE;
-                else if (direction === 'L') cx -= TILE_SIZE;
-                else if (direction === 'U') cy -= TILE_SIZE;
-                else if (direction === 'D') cy += TILE_SIZE;
-                path.push({ x: cx, y: cy });
+            levelData.forEach(item => {
+                let parts = item.split('_');
+                let mod = parts.length > 1 ? parts[0] : 'N';
+                let dir = parts.length > 1 ? parts[1] : parts[0];
+
+                if (dir === 'R') cx += TILE_SIZE;
+                else if (dir === 'L') cx -= TILE_SIZE;
+                else if (dir === 'U') cy -= TILE_SIZE;
+                else if (dir === 'D') cy += TILE_SIZE;
+                
+                path.push({ x: cx, y: cy, mod: mod });
             });
         }
 
@@ -116,6 +122,7 @@
             currentAngle = Math.PI;
             isRedPivot = true;
             score = 0;
+            currentSpeed = BASE_SPEED;
             resetTrails();
         }
 
@@ -130,7 +137,7 @@
                 gameState = 'PLAYING';
                 resetGame();
                 bgMusic.currentTime = 0;
-                bgMusic.play();
+                bgMusic.play().catch(e => console.log("Audio waiting or missing"));
                 statusDisplay.innerText = "";
                 scoreDisplay.innerText = `Score: ${score}`;
                 return;
@@ -159,6 +166,12 @@
                     score++;
                     isRedPivot = !isRedPivot;
                     currentAngle = targetAngle + Math.PI;
+                    
+                    let nextMod = path[pivotIndex].mod;
+                    if (nextMod === 'F') currentSpeed = BASE_SPEED * 2;
+                    else if (nextMod === 'S') currentSpeed = BASE_SPEED * 0.5;
+                    else currentSpeed = BASE_SPEED;
+
                     scoreDisplay.innerText = `Score: ${score}`;
                 } else {
                     gameState = 'GAMEOVER';
@@ -177,7 +190,7 @@
 
         function loop() {
             if (gameState === 'PLAYING') {
-                currentAngle += ORBIT_SPEED;
+                currentAngle += currentSpeed;
             }
 
             let pivotTile = path[pivotIndex] || {x:0, y:0};
@@ -189,10 +202,13 @@
             ctx.save();
             ctx.translate(-camera.x, -camera.y);
 
-            ctx.fillStyle = '#333';
             ctx.strokeStyle = '#555';
             ctx.lineWidth = 2;
             path.forEach(tile => {
+                if (tile.mod === 'F') ctx.fillStyle = '#ffaa00';
+                else if (tile.mod === 'S') ctx.fillStyle = '#00aaff';
+                else ctx.fillStyle = '#333';
+                
                 ctx.fillRect(tile.x - TILE_SIZE/2, tile.y - TILE_SIZE/2, TILE_SIZE, TILE_SIZE);
                 ctx.strokeRect(tile.x - TILE_SIZE/2, tile.y - TILE_SIZE/2, TILE_SIZE, TILE_SIZE);
             });
@@ -267,7 +283,8 @@
             requestAnimationFrame(loop);
         }
 
-        loadLevel([{x:0, y:0}]); 
+        // The Bug Fix: We load an empty level initially so it doesn't crash before you hit start.
+        loadLevel([]); 
         loop();
 
         window.addEventListener('resize', () => {

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fire & Ice - Rhythm Engine</title>
+    <title>Fire & Ice - Pure One Key</title>
     <style>
         body {
             margin: 0;
@@ -20,43 +20,33 @@
             top: 20px;
             left: 20px;
             pointer-events: none;
+            width: 100%;
+            text-align: center;
         }
         h1 {
             margin: 0;
-            font-size: 24px;
-            text-shadow: 0 0 5px white;
+            font-size: 28px;
+            text-shadow: 0 0 10px white;
         }
-        #startBtn {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            padding: 15px 30px;
-            font-size: 20px;
-            background-color: #fff;
-            color: #111;
-            border: none;
-            cursor: pointer;
-            pointer-events: auto;
-            font-family: 'Courier New', Courier, monospace;
-            font-weight: bold;
+        p {
+            font-size: 18px;
+            color: #aaa;
         }
     </style>
 </head>
 <body>
     <div id="ui">
-        <h1 id="scoreDisplay">Score: 0</h1>
+        <h1 id="statusDisplay">PRESS SPACE TO START</h1>
+        <p id="scoreDisplay"></p>
     </div>
-    
-    <button id="startBtn">START GAME & MUSIC</button>
     
     <canvas id="gameCanvas"></canvas>
     
     <script>
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
+        const statusDisplay = document.getElementById('statusDisplay');
         const scoreDisplay = document.getElementById('scoreDisplay');
-        const startBtn = document.getElementById('startBtn');
 
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
@@ -68,40 +58,42 @@
 
         let bgMusic = new Audio('track.mp3');
         
+        const level1 = [
+            'R', 'R', 'R', 'U', 'U', 'R', 'D', 'D', 'R', 'R', 
+            'U', 'L', 'U', 'R', 'R', 'R', 'D', 'R', 'U', 'U', 
+            'R', 'R', 'D', 'D', 'D', 'R', 'R', 'U', 'R', 'R'
+        ];
+
         let path = [];
         let pivotIndex = 0;
         let currentAngle = Math.PI; 
         let isRedPivot = true; 
         
         let score = 0;
-        let gameOver = false;
-        let isPlaying = false;
         let camera = { x: 0, y: 0 };
+        
+        let gameState = 'READY'; 
 
-        function generatePath() {
+        function loadLevel(levelData) {
             path = [{ x: 0, y: 0 }];
             let cx = 0, cy = 0;
-            for (let i = 0; i < 100; i++) {
-                let dir = Math.random();
-                if (dir < 0.5 || i < 3) {
-                    cx += TILE_SIZE;
-                } else if (dir < 0.75) {
-                    cy -= TILE_SIZE;
-                } else {
-                    cy += TILE_SIZE;
-                }
+            
+            levelData.forEach(direction => {
+                if (direction === 'R') cx += TILE_SIZE;
+                else if (direction === 'L') cx -= TILE_SIZE;
+                else if (direction === 'U') cy -= TILE_SIZE;
+                else if (direction === 'D') cy += TILE_SIZE;
+                
                 path.push({ x: cx, y: cy });
-            }
+            });
         }
 
         function resetGame() {
-            generatePath();
+            loadLevel(level1);
             pivotIndex = 0;
             currentAngle = Math.PI;
             isRedPivot = true;
             score = 0;
-            gameOver = false;
-            scoreDisplay.innerText = `Score: ${score}`;
         }
 
         function normalizeAngle(a) {
@@ -110,61 +102,62 @@
             return res;
         }
 
-        function pressKey() {
-            if (!isPlaying) return;
-
-            if (gameOver) {
+        function handleSingleKey() {
+            if (gameState === 'READY' || gameState === 'GAMEOVER' || gameState === 'WON') {
+                gameState = 'PLAYING';
+                resetGame();
                 bgMusic.currentTime = 0;
                 bgMusic.play();
-                resetGame();
+                statusDisplay.innerText = "";
+                scoreDisplay.innerText = `Score: ${score}`;
                 return;
             }
 
-            let pivotTile = path[pivotIndex];
-            let nextTile = path[pivotIndex + 1];
+            if (gameState === 'PLAYING') {
+                let pivotTile = path[pivotIndex];
+                let nextTile = path[pivotIndex + 1];
 
-            if (!nextTile) return;
+                if (!nextTile) {
+                    gameState = 'WON';
+                    bgMusic.pause();
+                    statusDisplay.innerText = "LEVEL COMPLETE! Press SPACE to replay.";
+                    return;
+                }
 
-            let targetAngle = Math.atan2(nextTile.y - pivotTile.y, nextTile.x - pivotTile.x);
-            let diff = Math.abs(normalizeAngle(currentAngle) - normalizeAngle(targetAngle));
-            
-            if (diff > Math.PI) diff = (Math.PI * 2) - diff;
+                let targetAngle = Math.atan2(nextTile.y - pivotTile.y, nextTile.x - pivotTile.x);
+                let diff = Math.abs(normalizeAngle(currentAngle) - normalizeAngle(targetAngle));
+                
+                if (diff > Math.PI) diff = (Math.PI * 2) - diff;
 
-            if (diff < HIT_TOLERANCE) {
-                pivotIndex++;
-                score++;
-                isRedPivot = !isRedPivot;
-                currentAngle = targetAngle + Math.PI;
-                scoreDisplay.innerText = `Score: ${score}`;
-            } else {
-                gameOver = true;
-                bgMusic.pause();
-                scoreDisplay.innerText = `GAME OVER! Score: ${score}. Press SPACE to restart.`;
+                if (diff < HIT_TOLERANCE) {
+                    pivotIndex++;
+                    score++;
+                    isRedPivot = !isRedPivot;
+                    currentAngle = targetAngle + Math.PI;
+                    scoreDisplay.innerText = `Score: ${score}`;
+                } else {
+                    gameState = 'GAMEOVER';
+                    bgMusic.pause();
+                    statusDisplay.innerText = "GAME OVER! Press SPACE to restart.";
+                }
             }
         }
 
         window.addEventListener('keydown', (e) => {
-            if (e.code === 'Space') pressKey();
-        });
-        window.addEventListener('mousedown', pressKey);
-        window.addEventListener('touchstart', pressKey);
-
-        startBtn.addEventListener('click', () => {
-            startBtn.style.display = 'none';
-            isPlaying = true;
-            bgMusic.currentTime = 0;
-            bgMusic.play();
-            resetGame();
+            if (e.code === 'Space') {
+                e.preventDefault(); 
+                handleSingleKey();
+            }
         });
 
         function loop() {
-            if (isPlaying && !gameOver) {
+            if (gameState === 'PLAYING') {
                 currentAngle += ORBIT_SPEED;
             }
 
-            let pivotTile = path[pivotIndex] || {x: 0, y: 0};
+            let pivotTile = path[pivotIndex] || {x:0, y:0};
             
-            camera.x += (pivotTile.x - canvas.width / 4 - camera.x) * 0.1;
+            camera.x += (pivotTile.x - canvas.width / 2 - camera.x) * 0.1;
             camera.y += (pivotTile.y - canvas.height / 2 - camera.y) * 0.1;
 
             ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -179,33 +172,35 @@
                 ctx.strokeRect(tile.x - TILE_SIZE/2, tile.y - TILE_SIZE/2, TILE_SIZE, TILE_SIZE);
             });
 
-            let orbiterX = pivotTile.x + Math.cos(currentAngle) * TILE_SIZE;
-            let orbiterY = pivotTile.y + Math.sin(currentAngle) * TILE_SIZE;
+            if (path.length > 0) {
+                let orbiterX = pivotTile.x + Math.cos(currentAngle) * TILE_SIZE;
+                let orbiterY = pivotTile.y + Math.sin(currentAngle) * TILE_SIZE;
 
-            let redPos = isRedPivot ? pivotTile : { x: orbiterX, y: orbiterY };
-            let bluePos = isRedPivot ? { x: orbiterX, y: orbiterY } : pivotTile;
+                let redPos = isRedPivot ? pivotTile : { x: orbiterX, y: orbiterY };
+                let bluePos = isRedPivot ? { x: orbiterX, y: orbiterY } : pivotTile;
 
-            ctx.beginPath();
-            ctx.arc(pivotTile.x, pivotTile.y, TILE_SIZE, 0, Math.PI * 2);
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
-            ctx.lineWidth = 1;
-            ctx.stroke();
+                ctx.beginPath();
+                ctx.arc(pivotTile.x, pivotTile.y, TILE_SIZE, 0, Math.PI * 2);
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+                ctx.lineWidth = 1;
+                ctx.stroke();
 
-            ctx.fillStyle = '#ff4444';
-            ctx.beginPath();
-            ctx.arc(redPos.x, redPos.y, 15, 0, Math.PI * 2);
-            ctx.fill();
-            
-            ctx.fillStyle = '#44ccff';
-            ctx.beginPath();
-            ctx.arc(bluePos.x, bluePos.y, 15, 0, Math.PI * 2);
-            ctx.fill();
+                ctx.fillStyle = '#ff4444';
+                ctx.beginPath();
+                ctx.arc(redPos.x, redPos.y, 15, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.fillStyle = '#44ccff';
+                ctx.beginPath();
+                ctx.arc(bluePos.x, bluePos.y, 15, 0, Math.PI * 2);
+                ctx.fill();
+            }
 
             ctx.restore();
             requestAnimationFrame(loop);
         }
 
-        resetGame();
+        loadLevel([{x:0, y:0}]); 
         loop();
 
         window.addEventListener('resize', () => {
